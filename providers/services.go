@@ -19,6 +19,7 @@ type Service struct {
 	AuthProviders authprovider.Service
 	Auth          auth.Service
 	Resources     resource.Service
+	User          user.Service
 }
 
 func NewServices(db db.DB, cache *cache.Service, enc encrypt.Service, jwtSvc jwt.Service) *Service {
@@ -26,12 +27,15 @@ func NewServices(db db.DB, cache *cache.Service, enc encrypt.Service, jwtSvc jwt
 	psvc := project.NewService(pstr)
 	cstr := client.NewStore(db)
 	csvc := client.NewService(cstr, psvc)
+	userStr := user.NewStore(db)
+	userSvc := user.NewService(userStr)
+	rstr := resource.NewStore(db)
+	rsvc := resource.NewService(rstr)
+
 	apStr := authprovider.NewStore(enc, db)
 	apSvc := authprovider.NewService(apStr, psvc)
 	ustr := user.NewStore(db)
 	usvc := user.NewService(ustr)
 	authSvc := auth.NewService(apSvc, csvc, *cache, jwtSvc, enc, usvc)
-	rstr := resource.NewStore(db)
-	rsvc := resource.NewService(rstr)
-	return &Service{Projects: psvc, Clients: csvc, AuthProviders: apSvc, Auth: authSvc, Resources: rsvc}
+	return &Service{Projects: psvc, Clients: csvc, AuthProviders: apSvc, Auth: authSvc, User: userSvc, Resources: rsvc}
 }
