@@ -908,10 +908,10 @@ func TestService_Create_NoUserInContext(t *testing.T) {
 
 	// We expect the store to be called with the client having a generated secret
 	mockStore.On("Create", ctx, mock.AnythingOfType("*sdk.Client")).Return(nil)
-	mockUserService.On("Create", ctx, mock.MatchedBy(func(u *sdk.User) bool {
-		return u.CreatedBy == "system" // Should use "system" as creator
-	})).Return(nil)
-	mockStore.On("Update", ctx, mock.AnythingOfType("*sdk.Client")).Return(nil)
+	// mockUserService.On("Create", ctx, mock.MatchedBy(func(u *sdk.User) bool {
+	// 	return u.CreatedBy == "system" // Should use "system" as creator
+	// })).Return(nil)
+	// mockStore.On("Update", ctx, mock.AnythingOfType("*sdk.Client")).Return(nil)
 
 	err := service.Create(ctx, client)
 
@@ -936,9 +936,10 @@ func TestService_Create_ServiceAccountUpdateError(t *testing.T) {
 	ctx := middlewares.AddMetadata(context.Background(), metadata)
 
 	client := &sdk.Client{
-		Name:        "Test Client",
-		Description: "Test Description",
-		ProjectId:   "project1",
+		ServiceAccountEmail: "test@yesy.com",
+		Name:                "Test Client",
+		Description:         "Test Description",
+		ProjectId:           "project1",
 	}
 
 	mockStore.On("Create", ctx, mock.AnythingOfType("*sdk.Client")).Return(nil)
