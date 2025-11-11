@@ -81,6 +81,7 @@ func (s service) Create(ctx context.Context, client *sdk.Client) error {
 		return fmt.Errorf("error while creating client secret: %w", err)
 	}
 	client.Secret = sec
+	// we does the secret hasing inside the store create method
 	err = s.s.Create(ctx, client)
 	if err != nil {
 		return fmt.Errorf("error while creating client: %w", err)
@@ -90,9 +91,11 @@ func (s service) Create(ctx context.Context, client *sdk.Client) error {
 		return fmt.Errorf("error hashing client secret: %w", err)
 	}
 	client.Secret = hashedSec
-	err = s.createAndLinkServiceAccountUser(ctx, client, client.ServiceAccountEmail)
-	if err != nil {
-		return fmt.Errorf("failed to create service account user: %w", err)
+	if len(client.ServiceAccountEmail) > 0 {
+		err = s.createAndLinkServiceAccountUser(ctx, client, client.ServiceAccountEmail)
+		if err != nil {
+			return fmt.Errorf("failed to create service account user: %w", err)
+		}
 	}
 	client.Secret = sec // return the plain secret only during creation
 	s.Emit(newEvent(ctx, goiamuniverse.EventClientCreated, *client, middlewares.GetMetadata(ctx)))
