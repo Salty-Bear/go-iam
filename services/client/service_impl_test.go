@@ -977,8 +977,6 @@ func TestService_Create_WithAuthProvider(t *testing.T) {
 
 	mockAuthService.On("Get", ctx, "provider1", true).Return(&sdk.AuthProvider{Id: "provider1"}, nil)
 	mockStore.On("Create", ctx, mock.AnythingOfType("*sdk.Client")).Return(nil)
-	mockUserService.On("Create", ctx, mock.AnythingOfType("*sdk.User")).Return(nil)
-	mockStore.On("Update", ctx, mock.AnythingOfType("*sdk.Client")).Return(nil)
 
 	err := service.Create(ctx, client)
 
@@ -1049,9 +1047,10 @@ func TestService_Create_UserCreateError(t *testing.T) {
 	ctx := middlewares.AddMetadata(context.Background(), metadata)
 
 	client := &sdk.Client{
-		Name:        "Test Client",
-		Description: "Test Description",
-		ProjectId:   "project1",
+		Name:                "Test Client",
+		Description:         "Test Description",
+		ProjectId:           "project1",
+		ServiceAccountEmail: "test@yetr.com",
 	}
 
 	mockStore.On("Create", ctx, mock.AnythingOfType("*sdk.Client")).Return(nil)
