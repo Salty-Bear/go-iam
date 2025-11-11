@@ -108,6 +108,42 @@ docker compose up -d
 - API: [http://localhost:3000](http://localhost:3000)
 - API Docs: [http://localhost:3000/docs](http://localhost:3000/docs)
 
+## 🧪 Testing
+
+### Running Tests
+
+Due to the extensive test suite in this project, it's important to use the correct testing command to avoid test caching issues that might cause local tests to pass while CI/CD fails.
+
+**Use this command for reliable testing:**
+
+```bash
+go test -count=1 ./... -v --race -cover
+```
+
+**Flags explanation:**
+
+- `-count=1`: Disables test result caching to ensure fresh test runs
+- `./...`: Runs tests for all packages recursively
+- `-v`: Verbose output showing individual test results
+- `--race`: Enables race condition detection
+- `-cover`: Shows test coverage information
+
+**Why `-count=1` is important:**
+
+- With many tests, Go may cache results and show false positives locally
+- CI/CD environments don't use cached results, leading to inconsistencies
+- This flag ensures your local testing matches CI/CD behavior
+
+### Running Specific Test Suites
+
+```bash
+# Test specific package
+go test -count=1 ./services/user -v --race -cover
+
+# Test specific function
+go test -count=1 ./services/user -v --race -cover -run TestCopyUserResources
+```
+
 ## 📦 Environment Variables
 
 Some important environment variables used in `.env`:
