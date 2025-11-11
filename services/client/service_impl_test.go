@@ -126,7 +126,6 @@ func TestService_GetAll_Success(t *testing.T) {
 	mockStore.AssertExpectations(t)
 }
 
-
 func TestService_Get_Success(t *testing.T) {
 	mockStore := &MockStore{}
 	mockProjectService := &services.MockProjectService{}
@@ -196,6 +195,42 @@ func TestService_Create_Success(t *testing.T) {
 		Name:        "Test Client",
 		Description: "Test Description",
 		ProjectId:   "project1",
+	}
+
+	// We expect the store to be called with the client having a generated secret
+	mockStore.On("Create", ctx, mock.MatchedBy(func(c *sdk.Client) bool {
+		return c.Name == "Test Client" &&
+			c.Description == "Test Description" &&
+			c.ProjectId == "project1" &&
+			c.Secret != "" // Secret should be generated
+	})).Return(nil)
+
+	err := service.Create(ctx, client)
+
+	assert.NoError(t, err)
+	assert.NotEmpty(t, client.Secret) // Secret should be generated
+	mockStore.AssertExpectations(t)
+}
+
+func TestService_Create_With_ServiceAccountEmail_Success(t *testing.T) {
+	mockStore := &MockStore{}
+	mockProjectService := &services.MockProjectService{}
+	mockAuthService := &services.MockAuthProviderService{}
+	mockUserService := &services.MockUserService{}
+	service := NewService(mockStore, mockProjectService, mockAuthService, mockUserService)
+
+	testUser := &sdk.User{Id: "user1", Name: "Test User"}
+	metadata := sdk.Metadata{
+		User:       testUser,
+		ProjectIds: []string{"project1", "project2"},
+	}
+	ctx := middlewares.AddMetadata(context.Background(), metadata)
+
+	client := &sdk.Client{
+		Name:                "Test Client",
+		Description:         "Test Description",
+		ProjectId:           "project1",
+		ServiceAccountEmail: "test@test.com",
 	}
 
 	// We expect the store to be called with the client having a generated secret
@@ -794,7 +829,7 @@ func TestService_RegenerateSecret(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, clientId, result.Id)
-	assert.NotEmpty(t, result.Secret) // New secret should be generated
+	assert.NotEmpty(t, result.Secret)                    // New secret should be generated
 	assert.NotEqual(t, "oldHashedSecret", result.Secret) // Should be different
 
 	mockStore.AssertExpectations(t)
@@ -850,7 +885,6 @@ func TestService_RegenerateSecret_UpdateError(t *testing.T) {
 
 	mockStore.AssertExpectations(t)
 }
-
 
 func TestService_Create_NoUserInContext(t *testing.T) {
 	mockStore := &MockStore{}
@@ -934,10 +968,10 @@ func TestService_Create_WithAuthProvider(t *testing.T) {
 	ctx := middlewares.AddMetadata(context.Background(), metadata)
 
 	client := &sdk.Client{
-		Name:                    "Test Client",
-		Description:             "Test Description",
-		ProjectId:               "project1",
-		DefaultAuthProviderId:   "provider1",
+		Name:                  "Test Client",
+		Description:           "Test Description",
+		ProjectId:             "project1",
+		DefaultAuthProviderId: "provider1",
 	}
 
 	mockAuthService.On("Get", ctx, "provider1", true).Return(&sdk.AuthProvider{Id: "provider1"}, nil)
@@ -964,10 +998,10 @@ func TestService_Create_AuthProviderNotFound(t *testing.T) {
 	ctx := createContextWithProjects([]string{"project1"})
 
 	client := &sdk.Client{
-		Name:                    "Test Client",
-		Description:             "Test Description",
-		ProjectId:               "project1",
-		DefaultAuthProviderId:   "provider1",
+		Name:                  "Test Client",
+		Description:           "Test Description",
+		ProjectId:             "project1",
+		DefaultAuthProviderId: "provider1",
 	}
 
 	mockAuthService.On("Get", ctx, "provider1", true).Return((*sdk.AuthProvider)(nil), sdk.ErrAuthProviderNotFound)
