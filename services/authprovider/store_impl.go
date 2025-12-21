@@ -31,7 +31,7 @@ func (s store) Get(ctx context.Context, id string) (*sdk.AuthProvider, error) {
 	err := s.db.FindOne(ctx, md, bson.D{{Key: md.IdKey, Value: id}}).Decode(&provider)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, ErrAuthProviderNotFound
+			return nil, sdk.ErrAuthProviderNotFound
 		}
 		return nil, fmt.Errorf("error finding auth provider: %w", err)
 	}
@@ -50,9 +50,7 @@ func (s store) GetAll(ctx context.Context, params sdk.AuthProviderQueryParams) (
 
 	// fetching the values from db
 	filter := bson.D{}
-	if len(params.ProjectIds) > 0 {
-		filter = append(filter, bson.E{Key: md.ProjectIdKey, Value: bson.D{{Key: "$in", Value: params.ProjectIds}}})
-	}
+	filter = append(filter, bson.E{Key: md.ProjectIdKey, Value: bson.D{{Key: "$in", Value: params.ProjectIds}}})
 	cursor, err := s.db.Find(ctx, md, filter)
 	if err != nil {
 		return nil, fmt.Errorf("error finding all auth providers: %w", err)
@@ -108,7 +106,7 @@ func (s store) Update(ctx context.Context, provider *sdk.AuthProvider) error {
 	t := time.Now()
 	provider.UpdatedAt = &t
 	if provider.Id == "" {
-		return ErrAuthProviderNotFound
+		return sdk.ErrAuthProviderNotFound
 	}
 	o, err := s.Get(ctx, provider.Id)
 	if err != nil {

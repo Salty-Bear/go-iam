@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/gofiber/fiber/v2/log"
 	"github.com/melvinodsa/go-iam/sdk"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -29,6 +30,10 @@ func NewAuthProvider(p sdk.AuthProvider) sdk.ServiceProvider {
 		Endpoint:     google.Endpoint,
 	}
 	return authProvider{cnf: oauthConfig}
+}
+
+func (g authProvider) HasRefreshTokenFlow() bool {
+	return true
 }
 
 func (g authProvider) GetAuthCodeUrl(state string) string {
@@ -72,7 +77,11 @@ func (g authProvider) RefreshToken(refreshToken string) (*sdk.AuthToken, error) 
 	if err != nil {
 		return nil, fmt.Errorf("error refreshing the token. %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Errorf("failed to close response body: %w", err)
+		}
+	}()
 
 	// Read the response
 	body, err := io.ReadAll(resp.Body)
@@ -109,12 +118,24 @@ func (g GoogleIdentityName) UpdateUserDetails(user *sdk.User) {
 	user.Name = g.FirstName
 }
 
+type GoogleIdentityProfilePic struct {
+	ProfilePic string `json:"profile_pic"`
+}
+
+func (g GoogleIdentityProfilePic) UpdateUserDetails(user *sdk.User) {
+	user.ProfilePic = g.ProfilePic
+}
+
 func (g authProvider) GetIdentity(token string) ([]sdk.AuthIdentity, error) {
 	resp, err := http.Get("https://www.googleapis.com/oauth2/v2/userinfo?access_token=" + url.QueryEscape(token))
 	if err != nil {
 		return nil, fmt.Errorf("error fetching the identity. %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Errorf("failed to close response body: %w", err)
+		}
+	}()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -129,5 +150,6 @@ func (g authProvider) GetIdentity(token string) ([]sdk.AuthIdentity, error) {
 	return []sdk.AuthIdentity{
 		{Type: sdk.AuthIdentityTypeEmail, Metadata: GoogleIdentityEmail{Email: tokenResponse.Email}},
 		{Type: sdk.AuthIdentityTypeEmail, Metadata: GoogleIdentityName{FirstName: tokenResponse.GivenName}},
+		{Type: sdk.AuthIdentityTypeEmail, Metadata: GoogleIdentityProfilePic{ProfilePic: tokenResponse.Picture}},
 	}, nil
 }

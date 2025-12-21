@@ -3,32 +3,91 @@ package resource
 import (
 	"context"
 
+	"github.com/melvinodsa/go-iam/middlewares"
 	"github.com/melvinodsa/go-iam/sdk"
+	"github.com/melvinodsa/go-iam/utils"
+	"github.com/melvinodsa/go-iam/utils/goiamuniverse"
 )
 
 type service struct {
 	s Store
+	e utils.Emitter[utils.Event[sdk.Resource], sdk.Resource]
 }
 
 func NewService(s Store) Service {
-	return service{s: s}
+	return service{s: s,
+		e: utils.NewEmitter[utils.Event[sdk.Resource]]()}
 }
 
 func (s service) Search(ctx context.Context, query sdk.ResourceQuery) (*sdk.ResourceList, error) {
+	query.ProjectIds = middlewares.GetProjects(ctx)
 	return s.s.Search(ctx, query)
 }
 
 func (s service) Get(ctx context.Context, id string) (*sdk.Resource, error) {
-	if len(id) == 0 {
-		return nil, ErrResourceNotFound
-	}
 	return s.s.Get(ctx, id)
 }
 
 func (s service) Create(ctx context.Context, resource *sdk.Resource) error {
-	return s.s.Create(ctx, resource)
+	_, err := s.s.Create(ctx, resource)
+	if err != nil {
+		return err
+	}
+	s.Emit(newEvent(ctx, goiamuniverse.EventResourceCreated, *resource, middlewares.GetMetadata(ctx)))
+	return nil
 }
 
 func (s service) Update(ctx context.Context, resource *sdk.Resource) error {
 	return s.s.Update(ctx, resource)
+}
+
+func (s service) Delete(ctx context.Context, id string) error {
+	vl, err := s.s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	err = s.s.Delete(ctx, id)
+	if err != nil {
+		return err
+	}
+	s.Emit(newEvent(ctx, goiamuniverse.EventResourceDeleted, *vl, middlewares.GetMetadata(ctx)))
+	return nil
+}
+
+func (s service) Emit(event utils.Event[sdk.Resource]) {
+	if event == nil {
+		return
+	}
+	s.e.Emit(event)
+}
+
+func (s service) Subscribe(eventName goiamuniverse.Event, subscriber utils.Subscriber[utils.Event[sdk.Resource], sdk.Resource]) {
+	s.e.Subscribe(eventName, subscriber)
+}
+
+type event struct {
+	name     goiamuniverse.Event
+	payload  sdk.Resource
+	metadata sdk.Metadata
+	ctx      context.Context
+}
+
+func (e event) Name() goiamuniverse.Event {
+	return e.name
+}
+
+func (e event) Payload() sdk.Resource {
+	return e.payload
+}
+
+func (e event) Metadata() sdk.Metadata {
+	return e.metadata
+}
+
+func (e event) Context() context.Context {
+	return e.ctx
+}
+
+func newEvent(ctx context.Context, name goiamuniverse.Event, payload sdk.Resource, metadata sdk.Metadata) utils.Event[sdk.Resource] {
+	return event{ctx: ctx, name: name, payload: payload, metadata: metadata}
 }

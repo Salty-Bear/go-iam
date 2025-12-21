@@ -13,6 +13,7 @@ import (
 	"github.com/melvinodsa/go-iam/sdk"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type store struct {
@@ -25,12 +26,25 @@ func NewStore(db db.DB) Store {
 
 func (s store) GetAll(ctx context.Context, queryParams sdk.ClientQueryParams) ([]sdk.Client, error) {
 	md := models.GetClientModel()
-	var clients []models.Client
+	clients := []models.Client{}
 	filter := bson.D{}
+	if len(queryParams.ProjectIds) == 0 && !queryParams.GoIamClient {
+		return nil, fmt.Errorf("no project ids provided or GoIamClient flag is not set")
+	}
 	if len(queryParams.ProjectIds) > 0 {
 		filter = append(filter, bson.E{Key: md.ProjectIdKey, Value: bson.D{{Key: "$in", Value: queryParams.ProjectIds}}})
 	}
-	cursor, err := s.db.Find(ctx, md, filter)
+
+	if queryParams.GoIamClient {
+		// if GoIamClient is true, we fetch all clients that are not associated
+		filter = append(filter, bson.E{Key: md.GoIamClientKey, Value: queryParams.GoIamClient})
+	}
+	opts := &options.FindOptions{}
+	if queryParams.SortByUpdatedAt {
+		opts.SetSort(bson.D{{Key: md.UpdatedAtKey, Value: -1}})
+	}
+
+	cursor, err := s.db.Find(ctx, md, filter, opts)
 	if err != nil {
 		return nil, fmt.Errorf("error finding all clients: %w", err)
 	}
@@ -54,7 +68,7 @@ func (s store) Get(ctx context.Context, id string) (*sdk.Client, error) {
 	err := s.db.FindOne(ctx, md, bson.D{{Key: md.IdKey, Value: id}}).Decode(&client)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, ErrClientNotFound
+			return nil, sdk.ErrClientNotFound
 		}
 		return nil, fmt.Errorf("error finding client: %w", err)
 	}
@@ -86,7 +100,7 @@ func (s store) Update(ctx context.Context, client *sdk.Client) error {
 	now := time.Now()
 	client.UpdatedAt = &now
 	if client.Id == "" {
-		return ErrClientNotFound
+		return sdk.ErrClientNotFound
 	}
 	o, err := s.Get(ctx, client.Id)
 	if err != nil {

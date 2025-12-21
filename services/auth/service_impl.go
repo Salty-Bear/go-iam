@@ -22,26 +22,30 @@ import (
 )
 
 type service struct {
-	authP     authprovider.Service
-	clientSvc client.Service
-	cacheSvc  cache.Service
-	jwtSvc    jwt.Service
-	encSvc    encrypt.Service
-	usrSvc    user.Service
+	authP      authprovider.Service
+	clientSvc  client.Service
+	cacheSvc   cache.Service
+	jwtSvc     jwt.Service
+	encSvc     encrypt.Service
+	usrSvc     user.Service
+	tokenTTL   int64
+	refetchTTL int64
 }
 
-func NewService(authP authprovider.Service, clientSvc client.Service, cacheSvc cache.Service, jwtSvc jwt.Service, encSvc encrypt.Service, usrSvc user.Service) Service {
+func NewService(authP authprovider.Service, clientSvc client.Service, cacheSvc cache.Service, jwtSvc jwt.Service, encSvc encrypt.Service, usrSvc user.Service, tokenTTL int64, refetchTTL int64) *service {
 	return &service{
-		authP:     authP,
-		clientSvc: clientSvc,
-		cacheSvc:  cacheSvc,
-		jwtSvc:    jwtSvc,
-		encSvc:    encSvc,
-		usrSvc:    usrSvc,
+		authP:      authP,
+		clientSvc:  clientSvc,
+		cacheSvc:   cacheSvc,
+		jwtSvc:     jwtSvc,
+		encSvc:     encSvc,
+		usrSvc:     usrSvc,
+		tokenTTL:   tokenTTL,
+		refetchTTL: refetchTTL,
 	}
 }
 
-func (s service) GetLoginUrl(ctx context.Context, clientId, authProviderId, state, redirectUrl string) (string, error) {
+func (s service) GetLoginUrl(ctx context.Context, clientId, authProviderId, state, redirectUrl, codeChallengeMethod, codeChallenge string) (string, error) {
 	/*
 	 * We first get the client details from the client service if authproviderid is not provided
 	 * Then we will get the auth provider details from the auth provider service for the default auth provider
@@ -59,13 +63,12 @@ func (s service) GetLoginUrl(ctx context.Context, clientId, authProviderId, stat
 	if err != nil {
 		return "", fmt.Errorf("error fetching auth provider details %w", err)
 	}
-	sp, err := s.authP.GetProvider(*p)
+	sp, err := s.authP.GetProvider(ctx, *p)
 	if err != nil {
 		return "", fmt.Errorf("error getting service provider %w", err)
 	}
-
 	// it is important to note that we are combining the state with the client id
-	newState, err := s.cacheState(ctx, state, clientId, p.Id, redirectUrl)
+	newState, err := s.cacheState(ctx, state, clientId, p.Id, redirectUrl, codeChallengeMethod, codeChallenge)
 	if err != nil {
 		return "", fmt.Errorf("error caching the state %w", err)
 	}
@@ -79,22 +82,29 @@ func (s service) Redirect(ctx context.Context, code, state string) (*sdk.AuthRed
 	 * get the callback details from client service
 	 * return the callback details
 	 */
-	clientId, oState, authProviderId, redirectUrl, err := s.getCacheState(ctx, state)
+	clientId, oState, authProviderId, redirectUrl, codeChallengeMethod, codeChallenge, err := s.getCacheState(ctx, state)
 	if err != nil {
 		return nil, fmt.Errorf("error getting the state from cache %w", err)
+	}
+
+	if len(codeChallengeMethod) != 0 && strings.Compare(codeChallengeMethod, "S256") != 0 {
+		return nil, fmt.Errorf("invalid code challenge")
 	}
 
 	token, err := s.getToken(ctx, authProviderId, code)
 	if err != nil {
 		return nil, fmt.Errorf("error getting the token %w", err)
 	}
+	token.CodeChallengeMethod = codeChallengeMethod
+	token.CodeChallenge = codeChallenge
+	token.ClientId = clientId
 
 	authCode, err := s.cacheAuthToken(ctx, *token)
 	if err != nil {
 		return nil, fmt.Errorf("error caching the token %w", err)
 	}
 
-	redirectUrl, err = s.getRedirectUrl(ctx, clientId, redirectUrl, authCode, oState)
+	redirectUrl, err = s.getRedirectUrl(ctx, clientId, redirectUrl, authCode, oState, codeChallenge)
 	if err != nil {
 		return nil, fmt.Errorf("error getting the callback url %w", err)
 	}
@@ -107,16 +117,47 @@ func (s service) Redirect(ctx context.Context, code, state string) (*sdk.AuthRed
 	return &sdk.AuthRedirectResponse{RedirectUrl: redirectUrl}, nil
 }
 
-func (s service) ClientCallback(ctx context.Context, code string) (*sdk.AuthVerifyCodeResponse, error) {
+func (s service) SynchronizeIdentity(ctx context.Context, userId string) error {
+	accessToken, err := s.getAccessTokenForUserId(ctx, userId)
+	if err != nil {
+		return fmt.Errorf("error fetching access token for user %w", err)
+	}
+	_, err = s.GetIdentity(ctx, accessToken, true)
+	if err != nil {
+		return fmt.Errorf("error fetching identity for user %w", err)
+	}
+	return nil
+}
+
+func (s service) ClientCallback(ctx context.Context, code, codeChallenge, clientId, clientSecret string) (*sdk.AuthVerifyCodeResponse, error) {
 	/*
 	 * get the code from the cache
 	 * generate the access token and store the original token in cache
 	 * invalidate the code from cache
 	 * return the access token
 	 */
+
+	// get the auth token from cache
+
+	isPublicClient := len(codeChallenge) != 0
+	isPrivateClient := len(clientSecret) != 0
 	token, err := s.getAuthTokenFromCache(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("error getting the token from cache %w", err)
+	}
+
+	if isPrivateClient {
+		err = s.handlePrivateClient(ctx, clientId, clientSecret)
+		if err != nil {
+			return nil, fmt.Errorf("error handling private client %w", err)
+		}
+	}
+
+	if isPublicClient {
+		err = s.handlePublicClient(clientId, codeChallenge, *token)
+		if err != nil {
+			return nil, fmt.Errorf("error handling public client %w", err)
+		}
 	}
 
 	accessTokenId, err := s.cacheAccessToken(ctx, *token, "")
@@ -139,7 +180,7 @@ func (s service) ClientCallback(ctx context.Context, code string) (*sdk.AuthVeri
 
 }
 
-func (s service) GetIdentity(ctx context.Context, accessToken string) (*sdk.User, error) {
+func (s service) GetIdentity(ctx context.Context, accessToken string, forceFetch bool) (*sdk.User, error) {
 	/*
 	 * get id from jwt access token
 	 * get the access token from cache
@@ -153,17 +194,44 @@ func (s service) GetIdentity(ctx context.Context, accessToken string) (*sdk.User
 	if !ok {
 		return nil, fmt.Errorf("error getting the access token id from claims")
 	}
+
+	var usr *sdk.User
+	if !forceFetch {
+		usr, err = s.getUserFromCache(ctx, accessToken)
+		if err == nil && usr != nil {
+			log.Debugf("fetched user records from cache - %s", usr.Id)
+			return usr, nil
+		}
+	}
+
 	token, err := s.getAccessTokenFromCache(ctx, accessTokenId)
 	if err != nil {
 		return nil, fmt.Errorf("error getting the token from cache %w", err)
 	}
-	identity, err := s.getAuthProivderIdentity(ctx, *token, accessToken)
-	if err != nil {
-		return nil, fmt.Errorf("error getting the identity from auth provider %w", err)
+
+	// Handle based on provider type
+	if len(token.ServiceAccountUserId) > 0 {
+		// For GoIAM/CLIENT, extract user from token
+		usr, err = s.getServiceAccountUser(ctx, token)
+		if err != nil {
+			return nil, fmt.Errorf("error getting service account user: %w", err)
+		}
+	} else {
+		// For other providers (Google, etc), use standard flow
+		identity, err := s.getAuthProivderIdentity(ctx, token, accessTokenId)
+		if err != nil {
+			return nil, fmt.Errorf("error getting the identity from auth provider %w", err)
+		}
+
+		usr, err = s.getOrCreateUser(ctx, *identity)
+		if err != nil {
+			return nil, fmt.Errorf("error getting or creating the user %w", err)
+		}
+
 	}
-	usr, err := s.getOrCreateUser(ctx, *identity)
+	err = s.cacheUserDetails(ctx, accessToken, *usr)
 	if err != nil {
-		return nil, fmt.Errorf("error getting or creating the user %w", err)
+		return nil, fmt.Errorf("error caching the user details %w", err)
 	}
 
 	return usr, nil
@@ -190,6 +258,9 @@ func (s service) getOrCreateUser(ctx context.Context, usr sdk.User) (*sdk.User, 
 			return nil, fmt.Errorf("error creating the user %w", err)
 		}
 		u = &usr
+	} else if err != nil {
+		// other error occurred during user lookup
+		return nil, fmt.Errorf("error fetching user %w", err)
 	}
 	if !u.Enabled {
 		return nil, errors.New("user is disabled")
@@ -202,7 +273,7 @@ func (s service) getOrCreateUser(ctx context.Context, usr sdk.User) (*sdk.User, 
 	return u, nil
 }
 
-func (s service) getAuthProivderIdentity(ctx context.Context, token sdk.AuthToken, accessToken string) (*sdk.User, error) {
+func (s service) getAuthProivderIdentity(ctx context.Context, token *sdk.AuthToken, accessTokenId string) (*sdk.User, error) {
 	/*
 	 * get the service provider
 	 * call the get identity method on the service provider
@@ -211,18 +282,18 @@ func (s service) getAuthProivderIdentity(ctx context.Context, token sdk.AuthToke
 	if err != nil {
 		return nil, fmt.Errorf("error fetching auth provider details %w", err)
 	}
-	sp, err := s.authP.GetProvider(*p)
+	sp, err := s.authP.GetProvider(ctx, *p)
 	if err != nil {
 		return nil, fmt.Errorf("error getting service provider %w", err)
 	}
 
 	// if the token is expired, we need to refresh the token
-	if token.ExpiresAt.Before(time.Now()) {
-		newToken, err := s.refreshAuthToken(ctx, accessToken, token, sp)
+	if token.ExpiresAt.Before(time.Now()) && sp.HasRefreshTokenFlow() {
+		newToken, err := s.refreshAuthToken(ctx, accessTokenId, *token, sp)
 		if err != nil {
 			return nil, fmt.Errorf("error refreshing the token %w", err)
 		}
-		token = *newToken
+		*token = *newToken
 	}
 
 	identity, err := sp.GetIdentity(token.AccessToken)
@@ -234,7 +305,14 @@ func (s service) getAuthProivderIdentity(ctx context.Context, token sdk.AuthToke
 		id.UpdateUserDetails(&user)
 	}
 	return &user, nil
+}
 
+func (s service) getServiceAccountUser(ctx context.Context, token *sdk.AuthToken) (*sdk.User, error) {
+	u, err := s.usrSvc.GetById(ctx, token.ServiceAccountUserId)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching service account user: %w", err)
+	}
+	return u, nil
 }
 
 func (s service) refreshAuthToken(ctx context.Context, accessToken string, token sdk.AuthToken, sp sdk.ServiceProvider) (*sdk.AuthToken, error) {
@@ -250,6 +328,65 @@ func (s service) refreshAuthToken(ctx context.Context, accessToken string, token
 	return tk, nil
 }
 
+func (s service) cacheUserDetails(ctx context.Context, accessToken string, user sdk.User) error {
+	/*
+	 * encode the user to json
+	 * generate a new user id
+	 * save the user in cache
+	 * add a reverse mapping for user id against access token
+	 */
+	b := bytes.NewBuffer([]byte{})
+	err := json.NewEncoder(b).Encode(user)
+	if err != nil {
+		return fmt.Errorf("error encoding the user %w", err)
+	}
+	userEnc, err := s.encSvc.Encrypt(b.String())
+	if err != nil {
+		return fmt.Errorf("error encrypting the user %w", err)
+	}
+	err = s.cacheSvc.Set(ctx, fmt.Sprintf("token-%s", accessToken), userEnc, time.Minute*time.Duration(s.refetchTTL))
+	if err != nil {
+		return fmt.Errorf("error saving the user %w", err)
+	}
+	err = s.cacheSvc.Set(ctx, fmt.Sprintf("user-token-%s", user.Id), accessToken, time.Minute*time.Duration(s.refetchTTL))
+	if err != nil {
+		return fmt.Errorf("error saving the user reverse mapping %w", err)
+	}
+	return nil
+}
+
+func (s service) getAccessTokenForUserId(ctx context.Context, userId string) (string, error) {
+	/*
+	 * get the value from cache
+	 */
+	val, err := s.cacheSvc.Get(ctx, fmt.Sprintf("user-token-%s", userId))
+	if err != nil {
+		return "", fmt.Errorf("error fetching the value from cache %w", err)
+	}
+	return val, nil
+}
+
+func (s service) getUserFromCache(ctx context.Context, accessToken string) (*sdk.User, error) {
+	/*
+	 * get the value from cache
+	 */
+	val, err := s.cacheSvc.Get(ctx, fmt.Sprintf("token-%s", accessToken))
+	if err != nil {
+		return nil, fmt.Errorf("error fetching the value from cache %w", err)
+	}
+
+	userDec, err := s.encSvc.Decrypt(val)
+	if err != nil {
+		return nil, fmt.Errorf("error decrypting the user %w", err)
+	}
+	result := sdk.User{}
+	err = json.NewDecoder(strings.NewReader(userDec)).Decode(&result)
+	if err != nil {
+		return nil, fmt.Errorf("error decoding the user %w", err)
+	}
+	return &result, nil
+}
+
 func (s service) getToken(ctx context.Context, authProviderId, code string) (*sdk.AuthToken, error) {
 	/*
 	 * get the client details
@@ -261,7 +398,7 @@ func (s service) getToken(ctx context.Context, authProviderId, code string) (*sd
 	if err != nil {
 		return nil, fmt.Errorf("error fetching auth provider details %w", err)
 	}
-	sp, err := s.authP.GetProvider(*p)
+	sp, err := s.authP.GetProvider(ctx, *p)
 	if err != nil {
 		return nil, fmt.Errorf("error getting service provider %w", err)
 	}
@@ -291,9 +428,10 @@ func (s service) cacheAccessToken(ctx context.Context, token sdk.AuthToken, acce
 	if len(accessToken) == 0 {
 		accessToken = uuid.New().String()
 	}
-	res := s.cacheSvc.Redis.Set(ctx, fmt.Sprintf("access-token-%s", accessToken), auEnc, time.Hour*24)
-	if res.Err() != nil {
-		return "", fmt.Errorf("error saving the access token %w", res.Err())
+
+	err = s.cacheSvc.Set(ctx, fmt.Sprintf("access-token-%s", accessToken), auEnc, time.Minute*time.Duration(s.tokenTTL))
+	if err != nil {
+		return "", fmt.Errorf("error saving the access token %w", err)
 	}
 	return accessToken, nil
 }
@@ -302,11 +440,13 @@ func (s service) getAccessTokenFromCache(ctx context.Context, accessToken string
 	/*
 	 * get the value from cache
 	 */
-	res := s.cacheSvc.Redis.Get(ctx, fmt.Sprintf("access-token-%s", accessToken))
-	if res.Err() != nil {
-		return nil, fmt.Errorf("error fetching the value from cache %w", res.Err())
+
+	val, err := s.cacheSvc.Get(ctx, fmt.Sprintf("access-token-%s", accessToken))
+	if err != nil {
+		return nil, fmt.Errorf("error fetching the value from cache %w", err)
 	}
-	auDec, err := s.encSvc.Decrypt(res.Val())
+
+	auDec, err := s.encSvc.Decrypt(val)
 	if err != nil {
 		return nil, fmt.Errorf("error decrypting the access token %w", err)
 	}
@@ -334,9 +474,9 @@ func (s service) cacheAuthToken(ctx context.Context, token sdk.AuthToken) (strin
 		return "", fmt.Errorf("error encrypting the access token %w", err)
 	}
 	authCode := uuid.New().String()
-	res := s.cacheSvc.Redis.Set(ctx, fmt.Sprintf("auth-code-%s", authCode), auEnc, time.Minute)
-	if res.Err() != nil {
-		return "", fmt.Errorf("error saving the auth code %w", res.Err())
+	err = s.cacheSvc.Set(ctx, fmt.Sprintf("auth-code-%s", authCode), auEnc, time.Minute)
+	if err != nil {
+		return "", fmt.Errorf("error saving the auth code %w", err)
 	}
 	return authCode, nil
 }
@@ -345,11 +485,13 @@ func (s service) getAuthTokenFromCache(ctx context.Context, authCode string) (*s
 	/*
 	 * get the value from cache
 	 */
-	res := s.cacheSvc.Redis.Get(ctx, fmt.Sprintf("auth-code-%s", authCode))
-	if res.Err() != nil {
-		return nil, fmt.Errorf("error fetching the value from cache %w", res.Err())
+
+	val, err := s.cacheSvc.Get(ctx, fmt.Sprintf("auth-code-%s", authCode))
+	if err != nil {
+		return nil, fmt.Errorf("error fetching the value from cache %w", err)
 	}
-	auDec, err := s.encSvc.Decrypt(res.Val())
+
+	auDec, err := s.encSvc.Decrypt(val)
 	if err != nil {
 		return nil, fmt.Errorf("error decrypting the access token %w", err)
 	}
@@ -365,71 +507,75 @@ func (s service) invalidateAuthToken(ctx context.Context, authCode string) error
 	/*
 	 * delete the value from cache
 	 */
-	res := s.cacheSvc.Redis.Del(ctx, fmt.Sprintf("auth-code-%s", authCode))
-	if res.Err() != nil {
-		return fmt.Errorf("error deleting the value from cache %w", res.Err())
+	err := s.cacheSvc.Delete(ctx, fmt.Sprintf("auth-code-%s", authCode))
+	if err != nil {
+		return fmt.Errorf("error deleting the value from cache %w", err)
 	}
 	return nil
 }
 
-func (s service) cacheState(ctx context.Context, state, clientId, providerId, redirectUrl string) (string, error) {
+func (s service) cacheState(ctx context.Context, state, clientId, providerId, redirectUrl, codeChallengeMethod, codeChallenge string) (string, error) {
 	/*
 	 * add the extra info required in cache
 	 * generate a new state id
 	 * save the state in cache
 	 */
-	newState := fmt.Sprintf("%s:%s:%s:%s", state, clientId, providerId, url.QueryEscape(redirectUrl))
+	newState := fmt.Sprintf("%s:%s:%s:%s:%s:%s", state, clientId, providerId, url.QueryEscape(redirectUrl), codeChallengeMethod, codeChallenge)
 	st, err := s.encSvc.Encrypt(newState)
 	if err != nil {
 		return "", fmt.Errorf("error encrypting the state %w", err)
 	}
 	stateId := uuid.New().String()
-	res := s.cacheSvc.Redis.Set(ctx, fmt.Sprintf("state-%s", stateId), st, time.Minute*5)
-	if res.Err() != nil {
-		return "", fmt.Errorf("error saving the state %w", res.Err())
+	err = s.cacheSvc.Set(ctx, fmt.Sprintf("state-%s", stateId), st, time.Minute*5)
+	if err != nil {
+		return "", fmt.Errorf("error saving the state %w", err)
 	}
 	return stateId, nil
 }
 
-func (s service) getCacheState(ctx context.Context, stateId string) (string, string, string, string, error) {
+func (s service) getCacheState(ctx context.Context, stateId string) (string, string, string, string, string, string, error) {
 	/*
 	 * get the state from cache
 	 */
-	res := s.cacheSvc.Redis.Get(ctx, fmt.Sprintf("state-%s", stateId))
-	if res.Err() != nil {
-		return "", "", "", "", fmt.Errorf("error fetching the state from cache %w", res.Err())
-	}
-	state, err := s.encSvc.Decrypt(res.Val())
+	val, err := s.cacheSvc.Get(ctx, fmt.Sprintf("state-%s", stateId))
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("error decrypting the state %w", err)
+		return "", "", "", "", "", "", fmt.Errorf("error fetching the state from cache %w", err)
+	}
+
+	state, err := s.encSvc.Decrypt(val)
+	if err != nil {
+		return "", "", "", "", "", "", fmt.Errorf("error decrypting the state %w", err)
 	}
 	stateParts := strings.Split(state, ":")
-	if len(stateParts) != 4 {
-		return "", "", "", "", fmt.Errorf("invalid state. expected to have 4 parts but got %d", len(stateParts))
+	if len(stateParts) != 6 {
+		return "", "", "", "", "", "", fmt.Errorf("invalid state. expected to have 6 parts but got %d", len(stateParts))
 	}
 	clientId := stateParts[1]
 	oState := stateParts[0]
 	authProviderId := stateParts[2]
 	redirectUrl := stateParts[3]
+	codeChallengeMethod := stateParts[4]
+	codeChallenge := stateParts[5]
+
 	urlDecoded, err := url.QueryUnescape(redirectUrl)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("error decoding the redirect url %w", err)
+		return "", "", "", "", "", "", fmt.Errorf("error decoding the redirect url %w", err)
 	}
-	return clientId, oState, authProviderId, urlDecoded, nil
+	return clientId, oState, authProviderId, urlDecoded, codeChallengeMethod, codeChallenge, nil
 }
 
 func (s service) invalidateState(ctx context.Context, stateId string) error {
 	/*
 	 * delete the value from cache
 	 */
-	res := s.cacheSvc.Redis.Del(ctx, fmt.Sprintf("state-%s", stateId))
-	if res.Err() != nil {
-		return fmt.Errorf("error deleting the value from cache %w", res.Err())
+	err := s.cacheSvc.Delete(ctx, fmt.Sprintf("state-%s", stateId))
+	if err != nil {
+		return fmt.Errorf("error deleting the value from cache %w", err)
 	}
 	return nil
 }
 
-func (s service) getRedirectUrl(ctx context.Context, clientId, redirectUrl, authCode, state string) (string, error) {
+func (s service) getRedirectUrl(ctx context.Context, clientId, redirectUrl, authCode, state, codeChallenge string) (string, error) {
 	/*
 	 * get the client details
 	 * get the auth provider details
@@ -455,5 +601,68 @@ func (s service) getRedirectUrl(ctx context.Context, clientId, redirectUrl, auth
 	} else {
 		redirectUrl = fmt.Sprintf("%s?code=%s&state=%s", redirectUrl, authCode, state)
 	}
+
+	if len(codeChallenge) != 0 {
+		redirectUrl = fmt.Sprintf("%s&code_challenge=%s", redirectUrl, generateCodeChallengeS256(codeChallenge))
+	}
 	return redirectUrl, nil
+}
+
+func (s service) ClientCredentials(ctx context.Context, clientId, clientSecret string) (*sdk.AuthVerifyCodeResponse, error) {
+	// Step 1: Validate client credentials
+	cl, err := s.clientSvc.Get(ctx, clientId, true)
+	if err != nil {
+		return nil, fmt.Errorf("invalid client_id: %w", err)
+	}
+
+	if !cl.Enabled {
+		return nil, errors.New("client is disabled")
+	}
+
+	err = s.clientSvc.VerifySecret(clientSecret, cl.Secret)
+	if err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	// Step 2: Check if client uses GoIAM/CLIENT auth provider
+	if !cl.IsServiceAccount() {
+		return nil, errors.New("client does not support service account flow")
+	}
+
+	// Step 3: Validate linked user
+	if cl.LinkedUserId == "" {
+		return nil, errors.New("client does not have a linked user for service account flow")
+	}
+
+	user, err := s.usrSvc.GetById(ctx, cl.LinkedUserId)
+	if err != nil {
+		return nil, fmt.Errorf("linked user not found: %w", err)
+	}
+
+	if !user.Enabled {
+		return nil, errors.New("linked user is disabled")
+	}
+
+	if user.Expiry != nil && user.Expiry.Before(time.Now()) {
+		return nil, errors.New("linked user has expired")
+	}
+
+	token := sdk.AuthToken{
+		ClientId:             clientId,
+		ServiceAccountUserId: user.Id,
+	}
+
+	// Step 6: Cache the token (same as OAuth flow)
+	accessTokenId, err := s.cacheAccessToken(ctx, token, "")
+	if err != nil {
+		return nil, fmt.Errorf("error caching access token: %w", err)
+	}
+
+	// generate jwt access token
+	accessToken, err := s.jwtSvc.GenerateToken(map[string]interface{}{"id": accessTokenId}, time.Now().AddDate(0, 0, 1).Unix())
+	if err != nil {
+		return nil, fmt.Errorf("error generating the access token %w", err)
+	}
+
+	return &sdk.AuthVerifyCodeResponse{AccessToken: accessToken}, nil
 }

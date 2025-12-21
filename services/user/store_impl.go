@@ -10,9 +10,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/melvinodsa/go-iam/db"
 	"github.com/melvinodsa/go-iam/db/models"
+	"github.com/melvinodsa/go-iam/middlewares"
 	"github.com/melvinodsa/go-iam/sdk"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type store struct {
@@ -104,24 +106,40 @@ func (s *store) GetByPhone(ctx context.Context, phone string, projectId string) 
 	return fromModelToSdk(&usr), nil
 }
 
-func (s *store) GetAll(ctx context.Context, query sdk.UserQuery) ([]sdk.User, error) {
+func (s *store) GetAll(ctx context.Context, query sdk.UserQuery) (*sdk.UserList, error) {
+	query.ProjectIds = middlewares.GetProjects(ctx)
 	md := models.GetUserModel()
+	filter := bson.A{}
 	var users []models.User
-	filter := bson.D{}
-	if query.ProjectId != "" {
-		filter = append(filter, bson.E{Key: md.ProjectIDKey, Value: query.ProjectId})
-	}
 	if query.SearchQuery != "" {
-		//  search by name or email or phone with caser insensitive
-		filter = append(filter, bson.E{
-			Key: "$or", Value: bson.A{
-				bson.D{{Key: md.NameKey, Value: bson.D{{Key: "$regex", Value: query.SearchQuery}, {Key: "$options", Value: "i"}}}},
-				bson.D{{Key: md.EmailKey, Value: bson.D{{Key: "$regex", Value: query.SearchQuery}, {Key: "$options", Value: "i"}}}},
-				bson.D{{Key: md.PhoneKey, Value: bson.D{{Key: "$regex", Value: query.SearchQuery}, {Key: "$options", Value: "i"}}}},
-			},
-		})
+		//  search by name, email, or phone (case-insensitive)
+		filter = append(filter,
+			bson.D{{Key: md.NameKey, Value: bson.D{{Key: "$regex", Value: query.SearchQuery}, {Key: "$options", Value: "i"}}}},
+			bson.D{{Key: md.EmailKey, Value: bson.D{{Key: "$regex", Value: query.SearchQuery}, {Key: "$options", Value: "i"}}}},
+			bson.D{{Key: md.PhoneKey, Value: bson.D{{Key: "$regex", Value: query.SearchQuery}, {Key: "$options", Value: "i"}}}},
+		)
 	}
-	cursor, err := s.db.Find(ctx, md, filter)
+	cond := bson.D{{Key: md.EnabledKey, Value: true}, {Key: md.ProjectIDKey, Value: bson.D{{Key: "$in", Value: query.ProjectIds}}}}
+
+	if len(query.RoleId) > 0 {
+		cond = append(cond, bson.E{Key: fmt.Sprintf("%s.%s", md.RolesIdKey, query.RoleId), Value: bson.D{{Key: "$exists", Value: true}}})
+	}
+
+	if len(filter) > 0 {
+		cond = append(cond, bson.E{Key: "$or", Value: filter})
+	}
+
+	// Get total count
+	total, err := s.db.CountDocuments(ctx, md, cond)
+	if err != nil {
+		return nil, fmt.Errorf("error counting users: %w", err)
+	}
+
+	opts := options.Find().
+		SetSkip(query.Skip).
+		SetLimit(query.Limit)
+
+	cursor, err := s.db.Find(ctx, md, cond, opts)
 	if err != nil {
 		return nil, fmt.Errorf("error finding all users: %w", err)
 	}
@@ -137,5 +155,22 @@ func (s *store) GetAll(ctx context.Context, query sdk.UserQuery) ([]sdk.User, er
 	if err != nil {
 		return nil, fmt.Errorf("error reading all users: %w", err)
 	}
-	return fromModelListToSdk(users), nil
+	return &sdk.UserList{
+		Users: fromModelListToSdk(users),
+		Total: total,
+		Skip:  query.Skip,
+		Limit: query.Limit,
+	}, nil
+}
+
+func (s *store) RemoveResourceFromAll(ctx context.Context, resourceKey string) error {
+	md := models.GetUserModel()
+	filter := bson.D{{Key: fmt.Sprintf("%s.%s", md.ResourcesKey, resourceKey), Value: bson.D{{Key: "$exists", Value: true}}}}
+	update := bson.D{{Key: "$unset", Value: bson.D{{Key: fmt.Sprintf("%s.%s", md.ResourcesKey, resourceKey), Value: ""}}}}
+
+	_, err := s.db.UpdateMany(ctx, md, filter, update)
+	if err != nil {
+		return fmt.Errorf("error removing resource from all users: %w", err)
+	}
+	return nil
 }

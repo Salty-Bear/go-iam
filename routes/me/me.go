@@ -1,51 +1,105 @@
 package me
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/log"
+	"github.com/melvinodsa/go-iam/middlewares"
 	"github.com/melvinodsa/go-iam/providers"
 	"github.com/melvinodsa/go-iam/sdk"
+	"github.com/melvinodsa/go-iam/utils/docs"
 )
 
+func MeRoute(router fiber.Router, basePath string) {
+	routePath := "/"
+	path := basePath + routePath
+	router.Get(routePath, Me)
+	docs.RegisterApi(docs.ApiWrapper{
+		Path:        path,
+		Method:      http.MethodGet,
+		Name:        "Get Me",
+		Description: "Get current user information",
+		Response: &docs.ApiResponse{
+			Description: "User fetched successfully",
+			Content:     new(sdk.UserResponse),
+		},
+		Parameters: []docs.ApiParameter{
+			{
+				Name:        "force_fetch",
+				In:          "query",
+				Description: "Force fetch user information",
+				Required:    false,
+			},
+		},
+		Tags:                 routeTags,
+		ProjectIDNotRequired: true,
+	})
+}
+
 func Me(c *fiber.Ctx) error {
-	// log.Debug("received me request")
-
 	// get access token from auth bearer token
-	authHeader := c.Get("Authorization")
-	if authHeader == "" {
-		return c.Status(http.StatusUnauthorized).JSON(sdk.UserResponse{
-			Success: false,
-			Message: "Authorizationnot found in header",
-		})
-	}
-
-	// Extract the token from the header
-	token := authHeader[len("Bearer "):]
-	if token == "" {
-		return c.Status(http.StatusUnauthorized).JSON(sdk.UserResponse{
-			Success: false,
-			Message: "Bearer token not found in header",
-		})
-	}
-
-	pr := providers.GetProviders(c)
-	user, err := pr.S.Auth.GetIdentity(c.Context(), token)
-	if err != nil {
-		message := fmt.Errorf("failed to fetch user. %w", err).Error()
-		log.Errorw("failed to fetch user", "error", err)
-		return c.Status(http.StatusInternalServerError).JSON(sdk.UserResponse{
-			Success: false,
-			Message: message,
-		})
-	}
+	user := middlewares.GetUser(c.Context())
 	log.Debug("user fetched successfully")
-
 	return c.Status(http.StatusOK).JSON(sdk.UserResponse{
 		Success: true,
 		Message: "User fetched successfully",
 		Data:    user,
 	})
+}
+
+func AuthClientCheck(c *fiber.Ctx) error {
+	pr := providers.GetProviders(c)
+	if pr.AuthClient == nil {
+		res := sdk.DashboardUserResponse{
+			Success: true,
+			Message: "auth is not setup yet.",
+		}
+		res.Data.Setup.ClientAdded = false
+		return c.Status(http.StatusOK).JSON(res)
+	}
+	return c.Next()
+}
+
+func DashboardMeRoute(router fiber.Router, basePath string, prv *providers.Provider) {
+	routePath := "/dashboard"
+	path := basePath + routePath
+	router.Get(routePath, AuthClientCheck, prv.AM.DashboardUser, DashboardMe)
+	docs.RegisterApi(docs.ApiWrapper{
+		Path:        path,
+		Method:      http.MethodGet,
+		Name:        "Get Dashboard Me",
+		Description: "Get current user information for dashboard",
+		Response: &docs.ApiResponse{
+			Description: "User fetched successfully",
+			Content:     new(sdk.DashboardUserResponse),
+		},
+		Parameters: []docs.ApiParameter{
+			{
+				Name:        "force_fetch",
+				In:          "query",
+				Description: "Force fetch user information",
+				Required:    false,
+			},
+		},
+		Tags:                 routeTags,
+		ProjectIDNotRequired: true,
+	})
+}
+
+func DashboardMe(c *fiber.Ctx) error {
+	pr := providers.GetProviders(c)
+	res := sdk.DashboardUserResponse{
+		Success: false,
+	}
+	res.Data.Setup.ClientAdded = true
+	res.Data.Setup.ClientId = pr.AuthClient.Id
+	// get access token from auth bearer token
+	user := middlewares.GetUser(c.Context())
+	log.Debug("user fetched successfully")
+	res.Success = true
+	res.Message = "User fetched successfully"
+	res.Data.Setup.ClientAdded = true
+	res.Data.User = user
+	return c.Status(http.StatusOK).JSON(res)
 }

@@ -10,14 +10,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/melvinodsa/go-iam/db"
 	"github.com/melvinodsa/go-iam/db/models"
+	"github.com/melvinodsa/go-iam/middlewares"
 	"github.com/melvinodsa/go-iam/sdk"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-)
-
-var (
-	ErrResourceNotFound = errors.New("resource not found")
 )
 
 type store struct {
@@ -30,17 +28,26 @@ func NewStore(db db.DB) Store {
 
 func (s store) Search(ctx context.Context, query sdk.ResourceQuery) (*sdk.ResourceList, error) {
 	md := models.GetResourceModel()
-	filter := bson.D{}
+	filter := bson.A{}
 
 	if query.Name != "" {
-		filter = append(filter, bson.E{Key: md.NameKey, Value: query.Name})
+		filter = append(filter, bson.D{{Key: md.NameKey, Value: primitive.Regex{Pattern: fmt.Sprintf(".*%s.*", query.Name), Options: "i"}}})
 	}
 	if query.Description != "" {
-		filter = append(filter, bson.E{Key: md.DescriptionKey, Value: query.Description})
+		filter = append(filter, bson.D{{Key: md.DescriptionKey, Value: primitive.Regex{Pattern: fmt.Sprintf(".*%s.*", query.Description), Options: "i"}}})
+	}
+	if query.Key != "" {
+		filter = append(filter, bson.D{{Key: md.KeyKey, Value: primitive.Regex{Pattern: fmt.Sprintf(".*%s.*", query.Key), Options: "i"}}})
+	}
+
+	cond := bson.D{{Key: md.EnabledKey, Value: true}, {Key: md.ProjectIdKey, Value: bson.D{{Key: "$in", Value: query.ProjectIds}}}}
+
+	if len(filter) > 0 {
+		cond = append(cond, bson.E{Key: "$or", Value: filter})
 	}
 
 	// Get total count
-	total, err := s.db.CountDocuments(ctx, md, filter)
+	total, err := s.db.CountDocuments(ctx, md, cond)
 	if err != nil {
 		return nil, fmt.Errorf("error counting resources: %w", err)
 	}
@@ -51,7 +58,7 @@ func (s store) Search(ctx context.Context, query sdk.ResourceQuery) (*sdk.Resour
 		SetLimit(query.Limit)
 
 	var resources []models.Resource
-	cursor, err := s.db.Find(ctx, md, filter, opts)
+	cursor, err := s.db.Find(ctx, md, cond, opts)
 	if err != nil {
 		return nil, fmt.Errorf("error finding resources: %w", err)
 	}
@@ -71,19 +78,19 @@ func (s store) Search(ctx context.Context, query sdk.ResourceQuery) (*sdk.Resour
 
 	return &sdk.ResourceList{
 		Resources: fromModelListToSdk(resources),
-		Total:    total,
-		Skip:     query.Skip,
-		Limit:    query.Limit,
+		Total:     total,
+		Skip:      query.Skip,
+		Limit:     query.Limit,
 	}, nil
 }
 
 func (s store) Get(ctx context.Context, id string) (*sdk.Resource, error) {
 	md := models.GetResourceModel()
 	var resource models.Resource
-	err := s.db.FindOne(ctx, md, bson.D{{Key: md.IdKey, Value: id}}).Decode(&resource)
+	err := s.db.FindOne(ctx, md, bson.D{{Key: md.IdKey, Value: id}, {Key: md.EnabledKey, Value: true}}).Decode(&resource)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			return nil, ErrResourceNotFound
+			return nil, sdk.ErrResourceNotFound
 		}
 		return nil, fmt.Errorf("error finding resource: %w", err)
 	}
@@ -91,25 +98,30 @@ func (s store) Get(ctx context.Context, id string) (*sdk.Resource, error) {
 	return fromModelToSdk(&resource), nil
 }
 
-func (s store) Create(ctx context.Context, resource *sdk.Resource) error {
+func (s store) Create(ctx context.Context, resource *sdk.Resource) (string, error) {
 	id := uuid.New().String()
 	resource.ID = id
 	t := time.Now()
 	resource.CreatedAt = &t
+	resource.Enabled = true
+	projectIds := middlewares.GetProjects(ctx)
+	if resource.ProjectId == "" && len(projectIds) > 0 {
+		resource.ProjectId = projectIds[0]
+	}
 	d := fromSdkToModel(*resource)
 	md := models.GetResourceModel()
 	_, err := s.db.InsertOne(ctx, md, d)
 	if err != nil {
-		return fmt.Errorf("error creating resource: %w", err)
+		return "", fmt.Errorf("error creating resource: %w", err)
 	}
-	return nil
+	return id, nil
 }
 
 func (s store) Update(ctx context.Context, resource *sdk.Resource) error {
 	now := time.Now()
 	resource.UpdatedAt = &now
 	if resource.ID == "" {
-		return ErrResourceNotFound
+		return sdk.ErrResourceNotFound
 	}
 	o, err := s.Get(ctx, resource.ID)
 	if err != nil {
@@ -127,41 +139,12 @@ func (s store) Update(ctx context.Context, resource *sdk.Resource) error {
 	return nil
 }
 
-func fromModelToSdk(m *models.Resource) *sdk.Resource {
-	return &sdk.Resource{
-		ID:          m.ID,
-		Name:        m.Name,
-		Description: m.Description,
-		Key:         m.Key,
-		Enabled:     m.Enabled,
-		CreatedAt:   m.CreatedAt,
-		CreatedBy:   m.CreatedBy,
-		UpdatedAt:   m.UpdatedAt,
-		UpdatedBy:   m.UpdatedBy,
-		DeletedAt:   m.DeletedAt,
+func (s store) Delete(ctx context.Context, id string) error {
+	md := models.GetResourceModel()
+	//mark it isenabled false
+	_, err := s.db.UpdateOne(ctx, md, bson.D{{Key: md.IdKey, Value: id}}, bson.D{{Key: "$set", Value: bson.D{{Key: md.EnabledKey, Value: false}}}})
+	if err != nil {
+		return fmt.Errorf("error deleting resource: %w", err)
 	}
-}
-
-func fromModelListToSdk(models []models.Resource) []sdk.Resource {
-	resources := make([]sdk.Resource, len(models))
-	for i, m := range models {
-		r := fromModelToSdk(&m)
-		resources[i] = *r
-	}
-	return resources
-}
-
-func fromSdkToModel(s sdk.Resource) *models.Resource {
-	return &models.Resource{
-		ID:          s.ID,
-		Name:        s.Name,
-		Description: s.Description,
-		Key:         s.Key,
-		Enabled:     s.Enabled,
-		CreatedAt:   s.CreatedAt,
-		CreatedBy:   s.CreatedBy,
-		UpdatedAt:   s.UpdatedAt,
-		UpdatedBy:   s.UpdatedBy,
-		DeletedAt:   s.DeletedAt,
-	}
+	return nil
 }

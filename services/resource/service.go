@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/melvinodsa/go-iam/sdk"
+	"github.com/melvinodsa/go-iam/utils"
 )
 
 type Service interface {
@@ -11,4 +12,6 @@ type Service interface {
 	Get(ctx context.Context, id string) (*sdk.Resource, error)
 	Create(ctx context.Context, resource *sdk.Resource) error
 	Update(ctx context.Context, resource *sdk.Resource) error
+	Delete(ctx context.Context, id string) error
+	utils.Emitter[utils.Event[sdk.Resource], sdk.Resource]
 }
