@@ -1,3 +1,130 @@
+# Architecture Overview
+
+## Provider Level
+
+The `Provider` struct acts as the central dependency injection container, wiring together all core services, database connections, cache, and middleware. It is initialized at application startup and made available throughout the request lifecycle.
+
+```mermaid
+classDiagram
+    class Provider {
+        +Service S
+        +DB D
+        +CacheService C
+        +ProjectMiddlewares PM
+        +AuthMiddlewares AM
+        +SdkClient AuthClient
+    }
+
+    class Service
+    class DB
+    class CacheService
+    class ProjectMiddlewares
+    class AuthMiddlewares
+    class SdkClient
+
+    Provider o-- Service : S
+    Provider o-- DB : D
+    Provider o-- CacheService : C
+    Provider o-- ProjectMiddlewares : PM
+    Provider o-- AuthMiddlewares : AM
+    Provider o-- SdkClient : AuthClient
+```
+
+## Service Level
+
+The `Service` struct is a container for all business logic services, each responsible for a specific domain (projects, clients, users, roles, etc.). Each service is constructed with its required dependencies, such as stores, other services, or utility providers.
+
+```mermaid
+classDiagram
+    class Service {
+        +ProjectService Projects
+        +ClientService Clients
+        +AuthProviderService AuthProviders
+        +AuthService Auth
+        +UserService User
+        +ResourceService Resources
+        +RoleService Role
+        +PolicyService Policy
+        +AuthSyncService AuthSync
+    }
+
+    class ProjectService
+    class ClientService
+    class AuthProviderService
+    class AuthService
+    class UserService
+    class ResourceService
+    class RoleService
+    class PolicyService
+    class AuthSyncService
+
+    class ProjectStore
+    class ClientStore
+    class AuthProviderStore
+    class ResourceStore
+    class RoleStore
+    class UserStore
+    class PolicyStore
+    class CacheService
+    class JWTService
+    class EncryptService
+
+    Service o-- ProjectService : Projects
+    Service o-- ClientService : Clients
+    Service o-- AuthProviderService : AuthProviders
+    Service o-- AuthService : Auth
+    Service o-- UserService : User
+    Service o-- ResourceService : Resources
+    Service o-- RoleService : Role
+    Service o-- PolicyService : Policy
+    Service o-- AuthSyncService : AuthSync
+
+    ProjectService <.. ProjectStore : uses
+    ClientService <.. ClientStore : uses
+    AuthProviderService <.. AuthProviderStore : uses
+    AuthService <.. AuthProviderService : uses
+    AuthService <.. ClientService : uses
+    AuthService <.. CacheService : uses
+    AuthService <.. JWTService : uses
+    AuthService <.. EncryptService : uses
+    AuthService <.. UserService : uses
+    UserService <.. UserStore : uses
+    UserService <.. RoleService : uses
+    ResourceService <.. ResourceStore : uses
+    RoleService <.. RoleStore : uses
+    PolicyService <.. PolicyStore : uses
+    AuthSyncService <.. AuthService : uses
+```
+
+## Key Concepts
+
+- **Provider**: Central container for all dependencies (services, DB, cache, middleware).
+- **Service**: Domain-specific business logic, constructed with required dependencies.
+- **Dependency Injection**: All components are initialized and injected at startup for testability and modularity.
+- **Middleware**: Project and authentication middlewares are initialized and attached to the Fiber app.
+
+## Usage
+
+- Initialize the provider using your application config:
+  ```go
+  provider, err := providers.InjectDefaultProviders(config)
+  if err != nil {
+      log.Fatal(err)
+  }
+  ```
+- Attach the provider to your Fiber app:
+  ```go
+  app.Use(providers.Handle(provider))
+  ```
+- Access services and dependencies in handlers via:
+  ```go
+  p := providers.GetProviders(c)
+  userService := p.S.User
+  ```
+
+---
+
+For more details, see the code in the `providers/` directory and the service implementations in `services/`.
 # go-iam
 
 [![codecov](https://codecov.io/github/melvinodsa/go-iam/graph/badge.svg?token=TWJXNBHTQL)](https://codecov.io/github/melvinodsa/go-iam)
