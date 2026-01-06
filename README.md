@@ -66,6 +66,24 @@
 
 ## 🏗️ Architecture Overview
 
+### Current Authentication Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App1 as My App 1
+    participant App2 as My App 2
+    participant IAM as Go IAM
+    participant Redis as Redis
+
+    App1->>App2: I am hitting `cool api`
+    App2-->>IAM: Can you share identity of the caller
+    IAM-->>Redis: Can you get the identity of the caller I had cached
+    Redis-->>IAM: Here you go, it is My App 1
+    IAM-->>App2: Here you go, its My App 1 and its access
+    App2->>App1: I can see that you are `My App 1` and <br/>you have access to call `cool` api<br/>Here you go with the response
+```
+
 ### Provider Level
 
 The `Provider` struct acts as the central dependency injection container, wiring together all core services, database connections, cache, and middleware. It is initialized at application startup and made available throughout the request lifecycle.
@@ -292,6 +310,93 @@ Some important environment variables used in `.env`:
 
 ---
 
+## 🔮 The Future: AI-Native IAM
+
+As AI agents and LLMs continue to become integral to applications, security challenges grow in ways traditional RBAC and IAM were never designed to handle. An AI agent is not just another user—it can:
+
+- 🔄 Call APIs on behalf of humans
+- 🧩 Chain multiple tools together (MCP, plugins, services)
+- 📦 Access sensitive data sources like PII, internal APIs, or even databases
+
+This makes **access control the last line of defense** when things go wrong.
+
+### Controlling the MCP Layer ⚙️
+
+The **Model Context Protocol (MCP)** allows LLMs to call tools and interact with external systems. But here's the risk: hallucinations or prompt injection can push the agent to trigger actions that weren't intended. IAM can help by:
+
+- 🔐 Restricting which tools an agent is allowed to call
+- 🛑 Blocking unsafe actions (like database writes or deletes) unless explicitly provisioned
+- ⏱️ Dynamically granting short-lived permissions based on conversation context
+
+This ensures the agent can only operate inside a **safe sandbox**, even when it's unpredictable.
+
+### Protecting the PII Layer 🛡️
+
+LLMs often need access to Personally Identifiable Information (PII) to be useful—but this data is highly sensitive. IAM can:
+
+- 🎯 Enforce policies so agents see only the data they absolutely need
+- 🕵️ Redact or mask fields (e.g., hide phone numbers or partial email IDs) depending on the user's role
+- 📊 Control column- or row-level access so no single query leaks more than intended
+
+By layering IAM into the PII access pipeline, we create a **zero-trust boundary** between agents and sensitive data.
+
+### Securing Other AI Security Layers 🧩
+
+Beyond MCP and PII, IAM can extend into other layers of the AI stack:
+
+- 🛂 **Tool Access** → Only authorized workflows should trigger certain high-risk tools (like payments, account updates, or deletion APIs)
+- 📡 **External APIs** → IAM can act as a gatekeeper, ensuring AI agents only call APIs they're explicitly allowed to
+- 🔄 **Dynamic Access Provisioning** → Just-in-time policies that grant access for the duration of a session or conversation, and then expire automatically
+
+### Future AI-Native IAM Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User
+    participant LLM as LLM / AI Agent
+    participant MCP as MCP Tool Layer
+    participant IAM as IAM Control Layer
+    participant Tool as Internal Tools / APIs
+    participant DB as PII / Database
+
+    User->>LLM: Ask: "Show cars of different colors"
+    LLM-->>MCP: Tool call (hallucinated)<br/>"Book service"
+    MCP->>IAM: Request permission for tool call<br/>(context: user intent, session)
+    IAM-->>IAM: Evaluate policies<br/>(role, context, risk)
+    
+    alt Unauthorized / Unsafe Action
+        IAM-->>MCP: Deny tool call
+        MCP-->>LLM: Action blocked
+        LLM-->>User: Respond safely<br/>(no booking triggered)
+    else Authorized (Explicitly allowed)
+        IAM-->>MCP: Grant short-lived access
+        MCP->>Tool: Execute service booking
+        Tool-->>MCP: Success
+        MCP-->>LLM: Result
+        LLM-->>User: Confirm action
+    end
+    
+    LLM-->>MCP: Request PII data
+    MCP->>IAM: Check PII access policy
+    IAM-->>DB: Allow masked / scoped access
+    DB-->>IAM: Filtered data
+    IAM-->>MCP: Redacted response
+    MCP-->>LLM: Safe PII data
+```
+
+### The Next Step for Go IAM 🌐
+
+The future of **Go IAM** is about more than static RBAC. It's about:
+
+- Context-aware, real-time access control for agents and LLMs
+- A single IAM layer that spans human users, bots, and AI systems
+- Security that is adaptive, not hardcoded
+
+In a world where AI is becoming a first-class actor in our systems, IAM is the layer that ensures **safety, trust, and control**.
+
+---
+
 ## License
 
-- Community Edition: [Apache 2.0](./LICENSE) (Open Source, free to use)
+- Community Edition: [Apache 2.0](./LICENSE) (Open Source, free to u
