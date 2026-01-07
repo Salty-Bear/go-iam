@@ -71,7 +71,7 @@
 ```mermaid
 sequenceDiagram
     autonumber
-    participant App1 as My App 1
+    participant App1 as User
     participant App2 as My App 2
     participant IAM as Go IAM
     participant Redis as Redis
@@ -79,9 +79,9 @@ sequenceDiagram
     App1->>App2: I am hitting `cool api`
     App2-->>IAM: Can you share identity of the caller
     IAM-->>Redis: Can you get the identity of the caller I had cached
-    Redis-->>IAM: Here you go, it is My App 1
-    IAM-->>App2: Here you go, its My App 1 and its access
-    App2->>App1: I can see that you are `My App 1` and <br/>you have access to call `cool` api<br/>Here you go with the response
+    Redis-->>IAM: Here you go, it is User
+    IAM-->>App2: Here you go, its User and its access
+    App2->>App1: I can see that you are `User` and <br/>you have access to call `cool` api<br/>Here you go with the response
 ```
 
 ### Provider Level
