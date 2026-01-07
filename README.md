@@ -66,7 +66,7 @@
 
 ## 🏗️ Architecture Overview
 
-### Current Authentication Flow
+### Current Flow
 
 ```mermaid
 sequenceDiagram
