@@ -537,6 +537,10 @@ paths:
                                     data:
                                         items:
                                             properties:
+                                                allowed_email_domains:
+                                                    items:
+                                                        type: string
+                                                    type: array
                                                 created_at:
                                                     format: date-time
                                                     nullable: true
@@ -608,6 +612,10 @@ paths:
                     application/json:
                         schema:
                             properties:
+                                allowed_email_domains:
+                                    items:
+                                        type: string
+                                    type: array
                                 created_at:
                                     format: date-time
                                     nullable: true
@@ -663,6 +671,10 @@ paths:
                                     data:
                                         nullable: true
                                         properties:
+                                            allowed_email_domains:
+                                                items:
+                                                    type: string
+                                                type: array
                                             created_at:
                                                 format: date-time
                                                 nullable: true
@@ -742,6 +754,10 @@ paths:
                                     data:
                                         nullable: true
                                         properties:
+                                            allowed_email_domains:
+                                                items:
+                                                    type: string
+                                                type: array
                                             created_at:
                                                 format: date-time
                                                 nullable: true
@@ -816,6 +832,10 @@ paths:
                     application/json:
                         schema:
                             properties:
+                                allowed_email_domains:
+                                    items:
+                                        type: string
+                                    type: array
                                 created_at:
                                     format: date-time
                                     nullable: true
@@ -871,6 +891,10 @@ paths:
                                     data:
                                         nullable: true
                                         properties:
+                                            allowed_email_domains:
+                                                items:
+                                                    type: string
+                                                type: array
                                             created_at:
                                                 format: date-time
                                                 nullable: true

@@ -17,6 +17,7 @@ type Client struct {
 	ProjectId             string     `bson:"project_id"`               // ID of the project this client belongs to
 	ServiceAccountEmail   string     `bson:"service_account_email"`    // Email for service account authentication
 	Scopes                []string   `bson:"scopes"`                   // OAuth2 scopes this client can request
+	AllowedEmailDomains   []string   `bson:"allowed_email_domains"`    // Allowed email domains for user accounts linked to this client
 	Enabled               bool       `bson:"enabled"`                  // Whether the client is currently active
 	LinkedUserId          string     `bson:"linked_user_id"`           // User ID for service account clients
 	CreatedAt             *time.Time `bson:"created_at"`               // Timestamp when the client was created
@@ -28,15 +29,16 @@ type Client struct {
 // ClientModel provides database access patterns and field mappings for Client entities.
 // It embeds the iam struct to inherit the database name and implements collection operations.
 type ClientModel struct {
-	iam                    // Embedded struct providing DbName() method
-	IdKey           string // BSON field key for client ID
-	NameKey         string // BSON field key for client name
-	TagsKey         string // BSON field key for client tags
-	DescriptionKey  string // BSON field key for client description
-	ProjectIdKey    string // BSON field key for project ID
-	GoIamClientKey  string // BSON field key for Go-IAM client flag
-	LinkedUserIdKey string // BSON field key for linked user ID (service accounts)
-	UpdatedAtKey    string // BSON field key for last updated timestamp
+	iam                           // Embedded struct providing DbName() method
+	IdKey                  string // BSON field key for client ID
+	NameKey                string // BSON field key for client name
+	TagsKey                string // BSON field key for client tags
+	DescriptionKey         string // BSON field key for client description
+	ProjectIdKey           string // BSON field key for project ID
+	GoIamClientKey         string // BSON field key for Go-IAM client flag
+	LinkedUserIdKey        string // BSON field key for linked user ID (service accounts)
+	AllowedEmailDomainsKey string // BSON field key for allowed email domains
+	UpdatedAtKey           string // BSON field key for last updated timestamp
 }
 
 // Name returns the MongoDB collection name for clients.
@@ -51,13 +53,14 @@ func (c ClientModel) Name() string {
 // Returns a ClientModel instance with all BSON field keys mapped to their respective field names.
 func GetClientModel() ClientModel {
 	return ClientModel{
-		IdKey:           "id",
-		NameKey:         "name",
-		TagsKey:         "tags",
-		DescriptionKey:  "description",
-		ProjectIdKey:    "project_id",
-		GoIamClientKey:  "go_iam_client",
-		LinkedUserIdKey: "linked_user_id",
-		UpdatedAtKey:    "updated_at",
+		IdKey:                  "id",
+		NameKey:                "name",
+		TagsKey:                "tags",
+		DescriptionKey:         "description",
+		ProjectIdKey:           "project_id",
+		GoIamClientKey:         "go_iam_client",
+		LinkedUserIdKey:        "linked_user_id",
+		AllowedEmailDomainsKey: "allowed_email_domains",
+		UpdatedAtKey:           "updated_at",
 	}
 }

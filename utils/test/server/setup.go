@@ -34,6 +34,7 @@ func GetServices(cnf config.AppConfig, cS cache.Service, d db.DB) (*providers.Se
 
 	mockClientSvc := services.MockClientService{}
 	mockProjectSvc := services.MockProjectService{}
+	mockClientSvc.On("Get", mock.Anything, mock.Anything, mock.Anything).Return(&sdk.Client{}, nil).Once()
 	mockClientSvc.On("GetGoIamClients", mock.Anything, mock.Anything).Return([]sdk.Client{}, nil)
 	mockClientSvc.On("Subscribe", mock.Anything, mock.Anything).Return()
 	mockProjectSvc.On("GetByName", mock.Anything, mock.Anything).Return(&sdk.Project{}, nil).Once()
