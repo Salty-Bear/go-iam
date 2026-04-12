@@ -96,6 +96,10 @@ func AuthProviderInternalServerError(msg string, c *fiber.Ctx) error {
 	return NewErrorAuthProviderResponse(msg, http.StatusInternalServerError, c)
 }
 
+func AuthProviderForbiddenError(msg string, c *fiber.Ctx) error {
+	return NewErrorAuthProviderResponse(msg, http.StatusForbidden, c)
+}
+
 // AuthProvidersResponse represents an API response containing a list of authentication providers.
 type AuthProvidersResponse struct {
 	Success bool           `json:"success"` // Indicates if the operation was successful

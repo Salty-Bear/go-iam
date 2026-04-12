@@ -242,7 +242,7 @@ func Verify(c *fiber.Ctx) error {
 		if err != nil {
 			message := fmt.Errorf("failed to get user identity. %w", err).Error()
 			log.Errorw("failed to get user identity", "client_id", clientId, "error", message)
-			return sdk.AuthProviderInternalServerError(message, c)
+			return sdk.AuthProviderForbiddenError(message, c)
 		}
 	}
 
