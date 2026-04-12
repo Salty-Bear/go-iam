@@ -34,7 +34,7 @@ func (m *MockAuthService) ClientCallback(ctx context.Context, code, codeChalleng
 	return args.Get(0).(*sdk.AuthVerifyCodeResponse), args.Error(1)
 }
 
-func (m *MockAuthService) GetIdentity(ctx context.Context, token string, forceFetch bool) (*sdk.User, error) {
+func (m *MockAuthService) GetIdentity(ctx context.Context, token string, forceFetch bool, emailDomains []string) (*sdk.User, error) {
 	args := m.Called(ctx, token, forceFetch)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)

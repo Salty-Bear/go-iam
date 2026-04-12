@@ -122,7 +122,7 @@ func (s service) SynchronizeIdentity(ctx context.Context, userId string) error {
 	if err != nil {
 		return fmt.Errorf("error fetching access token for user %w", err)
 	}
-	_, err = s.GetIdentity(ctx, accessToken, true)
+	_, err = s.GetIdentity(ctx, accessToken, true, nil)
 	if err != nil {
 		return fmt.Errorf("error fetching identity for user %w", err)
 	}
@@ -180,7 +180,7 @@ func (s service) ClientCallback(ctx context.Context, code, codeChallenge, client
 
 }
 
-func (s service) GetIdentity(ctx context.Context, accessToken string, forceFetch bool) (*sdk.User, error) {
+func (s service) GetIdentity(ctx context.Context, accessToken string, forceFetch bool, emailDomains []string) (*sdk.User, error) {
 	/*
 	 * get id from jwt access token
 	 * get the access token from cache
@@ -221,6 +221,20 @@ func (s service) GetIdentity(ctx context.Context, accessToken string, forceFetch
 		identity, err := s.getAuthProivderIdentity(ctx, token, accessTokenId)
 		if err != nil {
 			return nil, fmt.Errorf("error getting the identity from auth provider %w", err)
+		}
+
+		if len(emailDomains) > 0 {
+			// Filter identity based on allowed email domains
+			valid := false
+			for _, domain := range emailDomains {
+				if strings.HasSuffix(identity.Email, "@"+domain) {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return nil, fmt.Errorf("email domain not allowed")
+			}
 		}
 
 		usr, err = s.getOrCreateUser(ctx, *identity)
