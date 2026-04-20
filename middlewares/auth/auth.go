@@ -138,7 +138,7 @@ func (m *Middlewares) GetUser(c *fiber.Ctx) (*sdk.User, error) {
 		return nil, errors.New("`Bearer` token not found in header")
 	}
 
-	user, err := m.authSvc.GetIdentity(c.Context(), token, c.QueryBool("force_fetch", false))
+	user, err := m.authSvc.GetIdentity(c.Context(), token, c.QueryBool("force_fetch", false), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch identity: %w", err)
 	}

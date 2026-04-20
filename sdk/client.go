@@ -28,6 +28,7 @@ type Client struct {
 	LinkedUserId          string     `json:"linked_user_id"`           // Associated user ID for service accounts
 	ServiceAccountEmail   string     `json:"service_account_email"`    // Email address for service account clients
 	Enabled               bool       `json:"enabled"`                  // Whether the client is active
+	AllowedEmailDomains   []string   `json:"allowed_email_domains"`    // Allowed email domains for user accounts linked to this client
 	CreatedAt             *time.Time `json:"created_at"`               // Timestamp when client was created
 	CreatedBy             string     `json:"created_by"`               // ID of the user who created this client
 	UpdatedAt             *time.Time `json:"updated_at"`               // Timestamp when client was last updated

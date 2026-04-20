@@ -230,6 +230,22 @@ func Verify(c *fiber.Ctx) error {
 	}
 	log.Debug("code verification was successful")
 
+	// get the client to check if the user email restrictions need to be applied
+	client, err := pr.S.Clients.Get(c.Context(), clientId, true)
+	if err != nil {
+		message := fmt.Errorf("failed to get client details. %w", err).Error()
+		log.Errorw("failed to get client details", "client_id", clientId, "error", message)
+		return sdk.AuthProviderInternalServerError(message, c)
+	}
+	if len(client.AllowedEmailDomains) > 0 {
+		_, err := pr.S.Auth.GetIdentity(c.Context(), resp.AccessToken, true, client.AllowedEmailDomains)
+		if err != nil {
+			message := fmt.Errorf("failed to get user identity. %w", err).Error()
+			log.Errorw("failed to get user identity", "client_id", clientId, "error", message)
+			return sdk.AuthProviderForbiddenError(message, c)
+		}
+	}
+
 	return c.Status(http.StatusOK).JSON(sdk.AuthCallbackResponse{
 		Success: true,
 		Message: "Callback successful",
