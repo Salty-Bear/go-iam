@@ -1223,3 +1223,4 @@ func TestRemovePoliciesFromUserObj(t *testing.T) {
 		assert.Contains(t, user.Policies, "policy-2")
 	})
 }
+
